@@ -1,7 +1,14 @@
 [package]
-name = "todo_change_name"
+name = "gsm"
 version = "0.1.0"
 authors = ["traxys <quentin@familleboyer.net>"]
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.4.18", features = ["derive"] }
+config = "0.14.0"
+directories = "5.0.1"
+duct = "0.13.7"
+miette = { version = "7.0.0", features = ["fancy"] }
+serde = { version = "1.0.196", features = ["derive"] }
+temp-dir = "0.1.12"
