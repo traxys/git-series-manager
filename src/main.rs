@@ -34,6 +34,14 @@ enum Command {
     /// Format a patch. alias "p"
     #[command(alias = "p")]
     FormatPatch(FormatPatch),
+    #[command(alias = "ls")]
+    List(List),
+}
+
+#[derive(Args, Debug)]
+struct List {
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -72,6 +80,41 @@ struct GsmConfig {
     component: Option<String>,
     ci_url: Option<String>,
     interdiff_base: Option<String>,
+}
+
+fn latest_version(branch_dir: &Path) -> Result<Option<u64>> {
+    let mut dir_content = branch_dir
+        .read_dir()
+        .into_diagnostic()
+        .wrap_err("could not read branch dir")?
+        .peekable();
+
+    match dir_content.peek() {
+        Some(_) => Ok(Some(
+            dir_content
+                .filter_map(|e| {
+                    let entry = match e.into_diagnostic().wrap_err("Could not read entry") {
+                        Ok(e) => e,
+                        Err(e) => return Some(Err(e)),
+                    };
+
+                    let name = entry.file_name();
+                    let name = name.to_str().expect("patch set entry is not utf8");
+
+                    if name == "cover-letter" {
+                        None
+                    } else {
+                        Some(Ok(name.parse().expect("version is not an int")))
+                    }
+                })
+                .try_fold(0, |cur, version| -> Result<_> {
+                    let version = version?;
+
+                    Ok(std::cmp::max(version, cur))
+                })?,
+        )),
+        None => Ok(None),
+    }
 }
 
 fn git_bare(args: Vec<&str>) -> Result<String> {
@@ -182,45 +225,9 @@ fn main() -> Result<()> {
 
             let version = match args.version {
                 Some(v) => Some(v),
-                None => {
-                    let mut dir_content = branch_dir
-                        .read_dir()
-                        .into_diagnostic()
-                        .wrap_err("could not read branch dir")?
-                        .peekable();
-
-                    match dir_content.peek() {
-                        Some(_) => Some(
-                            dir_content
-                                .into_iter()
-                                .filter_map(|e| {
-                                    let entry = match e
-                                        .into_diagnostic()
-                                        .wrap_err("Could not read entry")
-                                    {
-                                        Ok(e) => e,
-                                        Err(e) => return Some(Err(e)),
-                                    };
-
-                                    let name = entry.file_name();
-                                    let name = name.to_str().expect("patch set entry is not utf8");
-
-                                    if name == "cover-letter" {
-                                        None
-                                    } else {
-                                        Some(Ok(name.parse().expect("version is not an int")))
-                                    }
-                                })
-                                .try_fold(0, |cur, version| -> Result<_> {
-                                    let version = version?;
-
-                                    Ok(std::cmp::max(version, cur))
-                                })?
-                                + 1,
-                        ),
-                        None => None,
-                    }
-                }
+                None => latest_version(&branch_dir)
+                    .wrap_err("could not get version")?
+                    .map(|v| v + 1),
             };
 
             let version_dir = branch_dir.join(version.unwrap_or(1).to_string());
@@ -422,6 +429,51 @@ fn main() -> Result<()> {
             file.write(cover_letter_content.as_bytes())
                 .into_diagnostic()
                 .wrap_err("Could not save cover letter")?;
+
+            Ok(())
+        }
+        Command::List(list) => {
+            for entry in patch_dir
+                .read_dir()
+                .into_diagnostic()
+                .wrap_err("Could not read patch dir")?
+            {
+                let entry = entry
+                    .into_diagnostic()
+                    .wrap_err("Could not read patch dir entry")?;
+
+                if entry.file_name() == "config.toml" {
+                    continue;
+                }
+
+                let branch_dir = patch_dir.join(entry.file_name());
+                let Some(branch_version) =
+                    latest_version(&branch_dir).wrap_err("Could not fetch latest version")?
+                else {
+                    continue;
+                };
+
+                println!(
+                    " - {}: v{branch_version}",
+                    entry.file_name().to_string_lossy()
+                );
+
+                if list.verbose {
+                    println!("   Patches:");
+                    for entry in branch_dir
+                        .join(branch_version.to_string())
+                        .read_dir()
+                        .into_diagnostic()
+                        .wrap_err("Could not read patchset dir")?
+                    {
+                        let entry = entry
+                            .into_diagnostic()
+                            .wrap_err("Could not read patchset entry")?;
+
+                        println!("    - {}", entry.file_name().to_string_lossy());
+                    }
+                }
+            }
 
             Ok(())
         }
