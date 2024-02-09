@@ -30,5 +30,8 @@
       };
 
       defaultPackage = naersk'.buildPackage ./.;
-    });
+    })
+    // {
+      homeManagerModules.default = import ./home-manager.nix self;
+    };
 }
