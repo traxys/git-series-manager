@@ -262,7 +262,18 @@ fn main() -> Result<()> {
                 .to_str()
                 .ok_or(miette!("Temp dir is not utf-8"))?;
 
-            let format_patch = |extra_args: &[&str]| {
+            struct VersionDir {
+                path: PathBuf,
+            }
+
+            impl Drop for VersionDir {
+                fn drop(&mut self) {
+                    std::fs::remove_dir_all(&self.path)
+                        .expect("could not delete version dir on error");
+                }
+            }
+
+            let format_patch = |extra_args: &[&str]| -> Result<_> {
                 let mut format_patch_args = vec!["format-patch", "-o", &version_dir];
                 let version_str = version.map(|s| s.to_string());
 
@@ -276,10 +287,14 @@ fn main() -> Result<()> {
                 format_patch_args.extend_from_slice(extra_args);
                 format_patch_args.extend(args.extra_args.iter().map(|s| s.deref()));
 
-                git_cd(&format_patch_args)
+                git_cd(&format_patch_args)?;
+
+                Ok(VersionDir {
+                    path: version_dir.into(),
+                })
             };
 
-            if let Some(interdiff) = args.diff {
+            let _version_dir = if let Some(interdiff) = args.diff {
                 let base = args
                     .base_diff
                     .or(config.interdiff_base)
@@ -371,10 +386,10 @@ fn main() -> Result<()> {
                 wt.exec(&apply_args)?;
 
                 let interdiff_branch = format!("--interdiff={}", branch.name);
-                format_patch(&[&interdiff_branch])?;
+                format_patch(&[&interdiff_branch])?
             } else {
-                format_patch(&[])?;
-            }
+                format_patch(&[])?
+            };
 
             let cover_letter = branch_dir.join(COVER_LETTER_NAME);
             if !cover_letter.exists() {
@@ -445,6 +460,8 @@ fn main() -> Result<()> {
             file.write(cover_letter_content.as_bytes())
                 .into_diagnostic()
                 .wrap_err("Could not save cover letter")?;
+
+            std::mem::forget(_version_dir);
 
             Ok(())
         }
