@@ -34,14 +34,29 @@ enum Command {
     /// Format a patch. alias "p"
     #[command(alias = "p")]
     FormatPatch(FormatPatch),
+    /// List all currently known patch series
     #[command(alias = "ls")]
     List(List),
+    /// Send a patch series by mail
+    Send(Send),
 }
 
 #[derive(Args, Debug)]
 struct List {
     #[arg(short, long)]
     verbose: bool,
+}
+
+#[derive(Args, Debug)]
+struct Send {
+    #[arg(
+        short,
+        long,
+        help = "Version of the patchset to set. Defaults to the latest version"
+    )]
+    version: Option<u64>,
+    #[arg(help = "Patch series to send")]
+    series: String,
 }
 
 #[derive(Args, Debug)]
@@ -75,6 +90,7 @@ struct FormatPatch {
 
 #[derive(Debug, serde::Deserialize)]
 struct GsmConfig {
+    sendmail_args: Option<Vec<String>>,
     editor: String,
     repo_url_base: String,
     component: Option<String>,
@@ -474,6 +490,29 @@ fn main() -> Result<()> {
                     }
                 }
             }
+
+            Ok(())
+        }
+        Command::Send(send) => {
+            let branch_dir = patch_dir.join(&send.series);
+            let version = match send.version {
+                Some(v) => v,
+                None => match latest_version(&branch_dir)? {
+                    None => return Err(miette!("No patch set for the branch {}", send.series)),
+                    Some(v) => v,
+                },
+            };
+
+            let version_dir = &branch_dir.join(&version.to_string());
+            let version_dir = version_dir.to_str().ok_or(miette!("Path is not UTF-8"))?;
+
+            let mut sendmail_args = vec!["send-email"];
+            if let Some(args) = &config.sendmail_args {
+                sendmail_args.extend(args.iter().map(|s| s.deref()))
+            }
+            sendmail_args.push(version_dir);
+
+            git_cd(&sendmail_args).wrap_err("Could not send mails")?;
 
             Ok(())
         }
