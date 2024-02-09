@@ -504,15 +504,23 @@ fn main() -> Result<()> {
             };
 
             let version_dir = &branch_dir.join(&version.to_string());
-            let version_dir = version_dir.to_str().ok_or(miette!("Path is not UTF-8"))?;
 
-            let mut sendmail_args = vec!["send-email"];
+            let mut cmd = std::process::Command::new("git");
+
+            cmd.arg("send-email");
             if let Some(args) = &config.sendmail_args {
-                sendmail_args.extend(args.iter().map(|s| s.deref()))
+                cmd.args(args.iter());
             }
-            sendmail_args.push(version_dir);
+            cmd.arg(version_dir);
 
-            git_cd(&sendmail_args).wrap_err("Could not send mails")?;
+            let status = cmd
+                .status()
+                .into_diagnostic()
+                .wrap_err("Could not send emails")?;
+
+            if !status.success() {
+                return Err(miette!("Could not send emails"));
+            }
 
             Ok(())
         }
