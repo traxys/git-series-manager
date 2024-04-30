@@ -66,8 +66,8 @@ struct Send {
         help = "Version of the patchset to set. Defaults to the latest version"
     )]
     version: Option<u64>,
-    #[arg(help = "Patch series to send")]
-    series: String,
+    #[arg(help = "Patch series to send. Defaults to the current branch")]
+    series: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -522,11 +522,17 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Send(send) => {
-            let branch_dir = patch_dir.join(&send.series);
+            let current_branch = git_cd(&["branch", "--show-current"])?;
+            let branch = send
+                .series
+                .as_ref()
+                .try_m_unwrap_or_else(|| Ok(&current_branch))?;
+
+            let branch_dir = patch_dir.join(&branch);
             let version = match send.version {
                 Some(v) => v,
                 None => match latest_version(&branch_dir)? {
-                    None => return Err(miette!("No patch set for the branch {}", send.series)),
+                    None => return Err(miette!("No patch set for the branch {branch}")),
                     Some(v) => v,
                 },
             };
