@@ -39,6 +39,17 @@ enum Command {
     List(List),
     /// Send a patch series by mail
     Send(Send),
+    /// Delete a series
+    Delete(Delete),
+}
+
+#[derive(Args, Debug)]
+struct Delete {
+    /// Only delete the local branch of the series
+    #[arg(short, long)]
+    local_only: bool,
+    /// Branch to delete (defaults to the current branch)
+    branch: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -538,6 +549,34 @@ fn main() -> Result<()> {
             if !status.success() {
                 return Err(miette!("Could not send emails"));
             }
+
+            Ok(())
+        }
+        Command::Delete(delete) => {
+            let current_branch = git_cd(&["branch", "--show-current"])?;
+
+            let branch = delete
+                .branch
+                .as_ref()
+                .try_m_unwrap_or_else(|| Ok(&current_branch))?;
+
+            let has_remote = git_cd(&["rev-parse", "@{u}"]).is_ok();
+            if has_remote && !delete.local_only {
+                println!("Removing branch from remote repository");
+                git_cd(&["push", "-d", "origin", branch])?;
+            }
+
+            if branch == &current_branch {
+                println!("Branch {branch} currently checked out, switching to master");
+                git_cd(&[
+                    "switch",
+                    config.interdiff_base.as_deref().unwrap_or("master"),
+                ])?;
+            }
+
+            git_cd(&["branch", "-d", branch])?;
+            let branch_dir = patch_dir.join(&branch);
+            std::fs::remove_dir_all(branch_dir).into_diagnostic()?;
 
             Ok(())
         }
