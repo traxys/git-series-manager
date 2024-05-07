@@ -48,6 +48,9 @@ struct Delete {
     /// Only delete the local branch of the series
     #[arg(short, long)]
     local_only: bool,
+    /// Force the deletion of the branch (-D)
+    #[arg(short, long)]
+    force: bool,
     /// Branch to delete (defaults to the current branch)
     branch: Option<String>,
 }
@@ -580,7 +583,12 @@ fn main() -> Result<()> {
                 ])?;
             }
 
-            git_cd(&["branch", "-d", branch])?;
+            let branch_delete = match delete.force {
+                true => "-D",
+                false => "-d",
+            };
+
+            git_cd(&["branch", branch_delete, branch])?;
             let branch_dir = patch_dir.join(&branch);
             std::fs::remove_dir_all(branch_dir).into_diagnostic()?;
 
