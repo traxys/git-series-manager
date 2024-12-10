@@ -432,7 +432,7 @@ impl FormatPatch {
                 })
                 .filter_map(|e| e.transpose())
                 .collect::<Result<Vec<_>>>()?;
-            let mut apply_args = vec!["am"];
+            let mut apply_args = vec!["am", "-3"];
             apply_args.extend(patches.iter().map(|s| s.deref()));
             wt.exec(&apply_args)?;
 
