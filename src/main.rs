@@ -238,6 +238,13 @@ struct FormatPatch {
         help = "Reference for the interdiff (defaults to ${config.interdiff_base})"
     )]
     base_diff: Option<String>,
+    #[arg(
+        short = 'D',
+        long,
+        help = "Perform the interdiff with an explicit reference",
+        conflicts_with = "diff"
+    )]
+    diff_to: Option<String>,
     extra_args: Vec<String>,
 }
 
@@ -345,102 +352,107 @@ impl FormatPatch {
             })
         };
 
-        let _version_dir = if let Some(interdiff) = self.diff {
-            let base = self
-                .base_diff
-                .or(config.interdiff_base)
-                .unwrap_or_else(|| String::from("origin/master"));
+        let _version_dir = match (self.diff, self.diff_to) {
+            (None, None) => format_patch(&[])?,
+            (Some(_), Some(_)) => unreachable!(),
+            (Some(patch_version), None) => {
+                let base = self
+                    .base_diff
+                    .or(config.interdiff_base)
+                    .unwrap_or_else(|| String::from("origin/master"));
 
-            struct TempBranch<'a> {
-                name: &'a str,
-                git: &'a dyn Fn(&[&str]) -> Result<String>,
-            }
-
-            impl<'a> Drop for TempBranch<'a> {
-                fn drop(&mut self) {
-                    (self.git)(&["branch", "-D", self.name]).unwrap();
+                struct TempBranch<'a> {
+                    name: &'a str,
+                    git: &'a dyn Fn(&[&str]) -> Result<String>,
                 }
-            }
 
-            let branch = {
-                let name = "__patch_old";
-                git_cd(&["branch", name, &base])?;
-                TempBranch { name, git: &git_cd }
-            };
-
-            struct GitWorktree {
-                _dir: TempDir,
-                path: String,
-            }
-
-            impl GitWorktree {
-                pub fn exec(&self, args: &[&str]) -> Result<String> {
-                    let mut a = vec!["-C", &self.path];
-                    a.extend_from_slice(args);
-
-                    git_bare(a)
+                impl<'a> Drop for TempBranch<'a> {
+                    fn drop(&mut self) {
+                        (self.git)(&["branch", "-D", self.name]).unwrap();
+                    }
                 }
-            }
 
-            impl Drop for GitWorktree {
-                fn drop(&mut self) {
-                    self.exec(&["worktree", "remove", "--force", &self.path])
-                        .unwrap();
+                let branch = {
+                    let name = "__patch_old";
+                    git_cd(&["branch", name, &base])?;
+                    TempBranch { name, git: &git_cd }
+                };
+
+                struct GitWorktree {
+                    _dir: TempDir,
+                    path: String,
                 }
-            }
 
-            let wt = {
-                let worktree = temp_dir::TempDir::new()
-                    .into_diagnostic()
-                    .wrap_err("Could not create worktree directory")?;
+                impl GitWorktree {
+                    pub fn exec(&self, args: &[&str]) -> Result<String> {
+                        let mut a = vec!["-C", &self.path];
+                        a.extend_from_slice(args);
 
-                let worktree_path = worktree
-                    .path()
-                    .to_str()
-                    .ok_or(miette!("Temp dir is not utf-8"))?
-                    .to_string();
-
-                git_cd(&["worktree", "add", "--detach", &worktree_path])?;
-
-                GitWorktree {
-                    path: worktree_path,
-                    _dir: worktree,
+                        git_bare(a)
+                    }
                 }
-            };
 
-            wt.exec(&["switch", branch.name])?;
+                impl Drop for GitWorktree {
+                    fn drop(&mut self) {
+                        self.exec(&["worktree", "remove", "--force", &self.path])
+                            .unwrap();
+                    }
+                }
 
-            let patches = branch_dir
-                .join(&interdiff.to_string())
-                .read_dir()
-                .into_diagnostic()
-                .wrap_err("Could not read interdiff folder")?
-                .map(|e| -> Result<_> {
-                    let e = e
+                let wt = {
+                    let worktree = temp_dir::TempDir::new()
                         .into_diagnostic()
-                        .wrap_err("Could not read interdiff entry")?;
+                        .wrap_err("Could not create worktree directory")?;
 
-                    let path = e
+                    let worktree_path = worktree
                         .path()
                         .to_str()
-                        .ok_or(miette!("Interdiff patch path is not utf-8"))?
+                        .ok_or(miette!("Temp dir is not utf-8"))?
                         .to_string();
 
-                    match path.contains("cover-letter") {
-                        true => Ok(None),
-                        false => Ok(Some(path)),
-                    }
-                })
-                .filter_map(|e| e.transpose())
-                .collect::<Result<Vec<_>>>()?;
-            let mut apply_args = vec!["am", "-3"];
-            apply_args.extend(patches.iter().map(|s| s.deref()));
-            wt.exec(&apply_args)?;
+                    git_cd(&["worktree", "add", "--detach", &worktree_path])?;
 
-            let interdiff_branch = format!("--interdiff={}", branch.name);
-            format_patch(&[&interdiff_branch])?
-        } else {
-            format_patch(&[])?
+                    GitWorktree {
+                        path: worktree_path,
+                        _dir: worktree,
+                    }
+                };
+
+                wt.exec(&["switch", branch.name])?;
+
+                let patches = branch_dir
+                    .join(&patch_version.to_string())
+                    .read_dir()
+                    .into_diagnostic()
+                    .wrap_err("Could not read interdiff folder")?
+                    .map(|e| -> Result<_> {
+                        let e = e
+                            .into_diagnostic()
+                            .wrap_err("Could not read interdiff entry")?;
+
+                        let path = e
+                            .path()
+                            .to_str()
+                            .ok_or(miette!("Interdiff patch path is not utf-8"))?
+                            .to_string();
+
+                        match path.contains("cover-letter") {
+                            true => Ok(None),
+                            false => Ok(Some(path)),
+                        }
+                    })
+                    .filter_map(|e| e.transpose())
+                    .collect::<Result<Vec<_>>>()?;
+                let mut apply_args = vec!["am", "-3"];
+                apply_args.extend(patches.iter().map(|s| s.deref()));
+                wt.exec(&apply_args)?;
+
+                let interdiff_branch = format!("--interdiff={}", branch.name);
+                format_patch(&[&interdiff_branch])?
+            }
+            (None, Some(diff_to)) => {
+                format_patch(&[&format!("--interdiff={diff_to}")])?
+            },
         };
 
         let cover_letter = branch_dir.join(COVER_LETTER_NAME);
