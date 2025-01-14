@@ -384,7 +384,8 @@ impl FormatPatch {
 
             impl Drop for GitWorktree {
                 fn drop(&mut self) {
-                    self.exec(&["worktree", "remove", &self.path]).unwrap();
+                    self.exec(&["worktree", "remove", "--force", &self.path])
+                        .unwrap();
                 }
             }
 
