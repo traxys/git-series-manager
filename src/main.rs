@@ -235,7 +235,7 @@ struct FormatPatch {
     #[arg(
         short = 'B',
         long,
-        help = "Reference for the interdiff (defaults to origin/master)"
+        help = "Reference for the interdiff (defaults to ${config.interdiff_base})"
     )]
     base_diff: Option<String>,
     extra_args: Vec<String>,
